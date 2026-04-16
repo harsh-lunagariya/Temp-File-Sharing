@@ -20,4 +20,4 @@ class FileUploadStatusSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = FileUpload
-        fields = ['id', 'key', 'filename', 'status', 'uploaded_at', 'downloaded_at']
+        fields = ['id', 'key', 'filename', 'status', 'uploaded_at', 'expires_at', 'downloaded_at']

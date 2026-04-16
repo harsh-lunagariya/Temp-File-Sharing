@@ -1,8 +1,11 @@
 import shutil
+from datetime import timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -33,6 +36,13 @@ class FileUploadModelTests(TestCase):
         upload = FileUpload.objects.create(file=SimpleUploadedFile('sample.txt', b'hello'))
         self.assertFalse(upload.is_downloaded)
         self.assertEqual(upload.status, FileUpload.Status.PENDING)
+
+    def test_sets_expiry_ten_minutes_after_upload(self):
+        upload = FileUpload.objects.create(file=SimpleUploadedFile('sample.txt', b'hello'))
+        self.assertLessEqual(
+            abs((upload.expires_at - (upload.uploaded_at + timedelta(minutes=FileUpload.EXPIRY_MINUTES))).total_seconds()),
+            2,
+        )
 
 
 @override_settings(MEDIA_ROOT=TEMP_MEDIA_ROOT)
@@ -65,11 +75,9 @@ class FileUploadApiTests(TestCase):
         upload = FileUpload.objects.create(file=SimpleUploadedFile('once.txt', b'one time'))
         response = self.client.post('/api/download/', {'key': upload.unique_key}, format='json')
 
-        upload.refresh_from_db()
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response['Content-Disposition'], 'attachment; filename="once.txt"')
-        self.assertTrue(upload.is_downloaded)
-        self.assertIsNotNone(upload.downloaded_at)
+        self.assertFalse(FileUpload.objects.filter(pk=upload.pk).exists())
 
         second_response = self.client.post('/api/download/', {'key': upload.unique_key}, format='json')
         self.assertEqual(second_response.status_code, status.HTTP_404_NOT_FOUND)
@@ -85,3 +93,53 @@ class FileUploadApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]['key'], upload.unique_key)
+
+    def test_expired_upload_is_deleted_before_download(self):
+        upload = FileUpload.objects.create(file=SimpleUploadedFile('old.txt', b'old data'))
+        upload.expires_at = timezone.now() - timedelta(minutes=1)
+        upload.save(update_fields=['expires_at'])
+
+        response = self.client.post('/api/download/', {'key': upload.unique_key}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertFalse(FileUpload.objects.filter(pk=upload.pk).exists())
+
+    def test_expired_upload_is_removed_from_files_list(self):
+        upload = FileUpload.objects.create(file=SimpleUploadedFile('status.txt', b'status'))
+        upload.expires_at = timezone.now() - timedelta(minutes=1)
+        upload.save(update_fields=['expires_at'])
+
+        response = self.client.get('/api/files/', {'keys': upload.unique_key})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data, [])
+
+    def test_deleted_key_can_be_reused_after_successful_download(self):
+        first_upload = FileUpload.objects.create(file=SimpleUploadedFile('first.txt', b'one time'))
+        key = first_upload.unique_key
+        self.client.post('/api/download/', {'key': key}, format='json')
+
+        with patch.object(FileUpload, 'generate_unique_key', return_value=key):
+            second_upload = FileUpload.objects.create(file=SimpleUploadedFile('second.txt', b'next file'))
+
+        self.assertEqual(second_upload.unique_key, key)
+
+    def test_download_schedules_async_file_deletion(self):
+        upload = FileUpload.objects.create(file=SimpleUploadedFile('async.txt', b'async delete'))
+
+        with patch('fileapp.models.delete_file_async') as mocked_delete:
+            response = self.client.post('/api/download/', {'key': upload.unique_key}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mocked_delete.assert_called_once()
+
+    def test_expired_cleanup_schedules_async_file_deletion(self):
+        upload = FileUpload.objects.create(file=SimpleUploadedFile('expired.txt', b'expired'))
+        upload.expires_at = timezone.now() - timedelta(minutes=1)
+        upload.save(update_fields=['expires_at'])
+
+        with patch('fileapp.models.delete_file_async') as mocked_delete:
+            response = self.client.get('/api/files/', {'keys': upload.unique_key})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mocked_delete.assert_called_once()

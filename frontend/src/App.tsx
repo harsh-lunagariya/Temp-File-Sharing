@@ -11,6 +11,7 @@ type UploadRecord = {
   filename: string
   status: 'Pending' | 'Downloaded'
   uploaded_at: string
+  expires_at: string
   downloaded_at: string | null
 }
 
@@ -31,6 +32,12 @@ function readStoredKeys() {
 function persistKey(key: string) {
   const keys = Array.from(new Set([key, ...readStoredKeys()]))
   window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(keys))
+}
+
+function removeMissingKeys(existingKeys: string[]) {
+  const storedKeys = readStoredKeys()
+  const nextKeys = storedKeys.filter((key) => existingKeys.includes(key))
+  window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(nextKeys))
 }
 
 function formatDate(value: string | null) {
@@ -76,6 +83,7 @@ export default function App() {
         params: { keys: keys.join(',') },
       })
       setRecords(response.data)
+      removeMissingKeys(response.data.map((record) => record.key))
       setRecordsError('')
     } catch {
       setRecordsError('Could not refresh the dashboard right now.')
@@ -117,7 +125,7 @@ export default function App() {
     try {
       const response = await api.post<{ key: string }>('/upload/', formData)
       setLatestKey(response.data.key)
-      setUploadMessage('Upload completed successfully.')
+      setUploadMessage('Upload completed successfully. This key stays valid for 10 minutes or until download.')
       persistKey(response.data.key)
       setSelectedFile(null)
       if (fileInput) {
@@ -164,7 +172,7 @@ export default function App() {
       link.download = filename
       link.click()
       window.URL.revokeObjectURL(url)
-      setDownloadMessage('File downloaded successfully. This key is now expired.')
+      setDownloadMessage('File downloaded successfully. This key has been removed and can be reused for future uploads.')
       setDownloadKey('')
       void loadRecords()
     } catch (error) {
@@ -207,7 +215,7 @@ export default function App() {
       <main className="content-grid">
         <section className="panel">
           <h2>Upload File</h2>
-          <p className="panel-copy">Choose any file and receive a unique 6-digit key.</p>
+          <p className="panel-copy">Choose any file and receive a unique 6-digit key valid for 10 minutes.</p>
           <form onSubmit={handleUpload} className="stack">
             <label className="file-picker">
               <span>Select file</span>
@@ -280,6 +288,7 @@ export default function App() {
                     <th>File</th>
                     <th>Status</th>
                     <th>Uploaded</th>
+                    <th>Valid until</th>
                     <th>Downloaded</th>
                   </tr>
                 </thead>
@@ -292,6 +301,7 @@ export default function App() {
                         <span className={`status-pill ${record.status.toLowerCase()}`}>{record.status}</span>
                       </td>
                       <td>{formatDate(record.uploaded_at)}</td>
+                      <td>{formatDate(record.expires_at)}</td>
                       <td>{formatDate(record.downloaded_at)}</td>
                     </tr>
                   ))}
