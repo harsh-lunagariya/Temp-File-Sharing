@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.sqlite3
+
+# Django
+backend/.venv/
+backend/media/
+backend/test_media/
+backend/db.sqlite3
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Environment files
+.env
+.env.*
+frontend/.env
+frontend/.env.*
+
+# Project planning
+Brain/
+PROJECT.md
+
+# OS / editor
+.DS_Store
+Thumbs.db
