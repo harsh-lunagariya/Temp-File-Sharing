@@ -13,15 +13,10 @@ backend/db.sqlite3
 frontend/node_modules/
 frontend/dist/
 
-# Environment files
-.env
-.env.*
-frontend/.env
-frontend/.env.*
-
 # Project planning
 Brain/
 PROJECT.md
+.env
 
 # OS / editor
 .DS_Store
